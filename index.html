@@ -1,187 +1,240 @@
-
-<!DOCTYPE html>
-<html lang="en" >
-
+<!doctype html>
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Snowfall</title>
-
-
-
-<link rel="stylesheet" href="style.css">
-
-
-</head>
-
-<body>
-
-<script src="three.min.js"></script>
-<script id="vertexShader" type="x-shader/x-vertex">
-void main() {
-	gl_Position = vec4( position, 1.0 );
+<meta charset="utf-8">
+<title>H5,200行代码实现粒子漩涡特效</title>
+<style>
+html,body{
+	margin:0px;
+	width:100%;
+	height:100%;
+	overflow:hidden;
+  background:#000;
 }
+#canvas{
+	position:absolute;
+	width:100%;
+	height:100%;
+}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+function project3D(x,y,z,vars){
+	var p,d;
+	x-=vars.camX;
+	y-=vars.camY-8;
+	z-=vars.camZ;
+	p=Math.atan2(x,z);
+	d=Math.sqrt(x*x+z*z);
+	x=Math.sin(p-vars.yaw)*d;
+	z=Math.cos(p-vars.yaw)*d;
+	p=Math.atan2(y,z);
+	d=Math.sqrt(y*y+z*z);
+	y=Math.sin(p-vars.pitch)*d;
+	z=Math.cos(p-vars.pitch)*d;
+	var rx1=-1000;
+	var ry1=1;
+	var rx2=1000;
+	var ry2=1;
+	var rx3=0;
+	var ry3=0;
+	var rx4=x;
+	var ry4=z;
+	var uc=(ry4-ry3)*(rx2-rx1)-(rx4-rx3)*(ry2-ry1);
+	var ua=((rx4-rx3)*(ry1-ry3)-(ry4-ry3)*(rx1-rx3))/uc;
+	var ub=((rx2-rx1)*(ry1-ry3)-(ry2-ry1)*(rx1-rx3))/uc;
+	if(!z)z=0.000000001;
+	if(ua>0&&ua<1&&ub>0&&ub<1){
+		return {
+			x:vars.cx+(rx1+ua*(rx2-rx1))*vars.scale,
+			y:vars.cy+y/z*vars.scale,
+			d:(x*x+y*y+z*z)
+		};
+	}else{
+		return { d:-1 };
+	}
+}
+function elevation(x,y,z){
+	var dist = Math.sqrt(x*x+y*y+z*z);
+	if(dist && z/dist>=-1 && z/dist <=1) return Math.acos(z / dist);
+	return 0.00000001;
+}
+function rgb(col){
+	col += 0.000001;
+	var r = parseInt((0.5+Math.sin(col)*0.5)*16);
+	var g = parseInt((0.5+Math.cos(col)*0.5)*16);
+	var b = parseInt((0.5-Math.sin(col)*0.5)*16);
+	return "#"+r.toString(16)+g.toString(16)+b.toString(16);
+}
+function interpolateColors(RGB1,RGB2,degree){
+	var w2=degree;
+	var w1=1-w2;
+	return [w1*RGB1[0]+w2*RGB2[0],w1*RGB1[1]+w2*RGB2[1],w1*RGB1[2]+w2*RGB2[2]];
+}
+function rgbArray(col){
+	col += 0.000001;
+	var r = parseInt((0.5+Math.sin(col)*0.5)*256);
+	var g = parseInt((0.5+Math.cos(col)*0.5)*256);
+	var b = parseInt((0.5-Math.sin(col)*0.5)*256);
+	return [r, g, b];
+}
+function colorString(arr){
+	var r = parseInt(arr[0]);
+	var g = parseInt(arr[1]);
+	var b = parseInt(arr[2]);
+	return "#"+("0" + r.toString(16) ).slice (-2)+("0" + g.toString(16) ).slice (-2)+("0" + b.toString(16) ).slice (-2);
+}
+function process(vars){
+	if(vars.points.length<vars.initParticles) for(var i=0;i<5;++i) spawnParticle(vars);
+	var p,d,t;	
+	p = Math.atan2(vars.camX, vars.camZ);
+	d = Math.sqrt(vars.camX * vars.camX + vars.camZ * vars.camZ);
+	d -= Math.sin(vars.frameNo / 80) / 25;
+	t = Math.cos(vars.frameNo / 300) / 165;
+	vars.camX = Math.sin(p + t) * d;
+	vars.camZ = Math.cos(p + t) * d;
+	vars.camY = -Math.sin(vars.frameNo / 220) * 15;
+	vars.yaw = Math.PI + p + t;
+	vars.pitch = elevation(vars.camX, vars.camZ, vars.camY) - Math.PI / 2;	
+	var t;
+	for(var i=0;i<vars.points.length;++i){		
+		x=vars.points[i].x;
+		y=vars.points[i].y;
+		z=vars.points[i].z;
+		d=Math.sqrt(x*x+z*z)/1.0075;
+		t=.1/(1+d*d/5);
+		p=Math.atan2(x,z)+t;
+		vars.points[i].x=Math.sin(p)*d;
+		vars.points[i].z=Math.cos(p)*d;
+		vars.points[i].y+=vars.points[i].vy*t*((Math.sqrt(vars.distributionRadius)-d)*2);
+		if(vars.points[i].y>vars.vortexHeight/2 || d<.25){
+			vars.points.splice(i,1);
+			spawnParticle(vars);
+		}
+	}
+}
+function drawFloor(vars){	
+	var x,y,z,d,point,a;
+	for (var i = -25; i <= 25; i += 1) {
+		for (var j = -25; j <= 25; j += 1) {
+			x = i*2;
+			z = j*2;
+			y = vars.floor;
+			d = Math.sqrt(x * x + z * z);
+			point = project3D(x, y-d*d/85, z, vars);
+			if (point.d != -1) {
+				size = 1 + 15000 / (1 + point.d);
+				a = 0.15 - Math.pow(d / 50, 4) * 0.15;
+				if (a > 0) {
+					vars.ctx.fillStyle = colorString(interpolateColors(rgbArray(d/26-vars.frameNo/40),[0,128,32],.5+Math.sin(d/6-vars.frameNo/8)/2));
+					vars.ctx.globalAlpha = a;
+					vars.ctx.fillRect(point.x-size/2,point.y-size/2,size,size);
+				}
+			}
+		}
+	}		
+	vars.ctx.fillStyle = "#82f";
+	for (var i = -25; i <= 25; i += 1) {
+		for (var j = -25; j <= 25; j += 1) {
+			x = i*2;
+			z = j*2;
+			y = -vars.floor;
+			d = Math.sqrt(x * x + z * z);
+			point = project3D(x, y+d*d/85, z, vars);
+			if (point.d != -1) {
+				size = 1 + 15000 / (1 + point.d);
+				a = 0.15 - Math.pow(d / 50, 4) * 0.15;
+				if (a > 0) {
+					vars.ctx.fillStyle = colorString(interpolateColors(rgbArray(-d/26-vars.frameNo/40),[32,0,128],.5+Math.sin(-d/6-vars.frameNo/8)/2));
+					vars.ctx.globalAlpha = a;
+					vars.ctx.fillRect(point.x-size/2,point.y-size/2,size,size);
+				}
+			}
+		}
+	}		
+}
+function sortFunction(a,b){
+	return b.dist-a.dist;
+}
+function draw(vars){
+	vars.ctx.globalAlpha=.15;
+	vars.ctx.fillStyle="#000";
+	vars.ctx.fillRect(0, 0, canvas.width, canvas.height);
+	drawFloor(vars);	
+	var point,x,y,z,a;
+	for(var i=0;i<vars.points.length;++i){
+		x=vars.points[i].x;
+		y=vars.points[i].y;
+		z=vars.points[i].z;
+		point=project3D(x,y,z,vars);
+		if(point.d != -1){
+			vars.points[i].dist=point.d;
+			size=1+vars.points[i].radius/(1+point.d);
+			d=Math.abs(vars.points[i].y);
+			a = .8 - Math.pow(d / (vars.vortexHeight/2), 1000) * .8;
+			vars.ctx.globalAlpha=a>=0&&a<=1?a:0;
+			vars.ctx.fillStyle=rgb(vars.points[i].color);
+			if(point.x>-1&&point.x<vars.canvas.width&&point.y>-1&&point.y<vars.canvas.height)vars.ctx.fillRect(point.x-size/2,point.y-size/2,size,size);
+		}
+	}
+	vars.points.sort(sortFunction);
+}
+function spawnParticle(vars){
+ 
+	var p,ls;
+	pt={};
+	p=Math.PI*2*Math.random();
+	ls=Math.sqrt(Math.random()*vars.distributionRadius);
+	pt.x=Math.sin(p)*ls;
+	pt.y=-vars.vortexHeight/2;
+	pt.vy=vars.initV/20+Math.random()*vars.initV;
+	pt.z=Math.cos(p)*ls;
+	pt.radius=200+800*Math.random();
+	pt.color=pt.radius/1000+vars.frameNo/250;
+	vars.points.push(pt);	
+}
+function frame(vars) {
+	if(vars === undefined){
+		var vars={};
+		vars.canvas = document.querySelector("canvas");
+		vars.ctx = vars.canvas.getContext("2d");
+		vars.canvas.width = document.body.clientWidth;
+		vars.canvas.height = document.body.clientHeight;
+		window.addEventListener("resize", function(){
+			vars.canvas.width = document.body.clientWidth;
+			vars.canvas.height = document.body.clientHeight;
+			vars.cx=vars.canvas.width/2;
+			vars.cy=vars.canvas.height/2;
+		}, true);
+		vars.frameNo=0;
+ 
+		vars.camX = 0;
+		vars.camY = 0;
+		vars.camZ = -14;
+		vars.pitch = elevation(vars.camX, vars.camZ, vars.camY) - Math.PI / 2;
+		vars.yaw = 0;
+		vars.cx=vars.canvas.width/2;
+		vars.cy=vars.canvas.height/2;
+		vars.bounding=10;
+		vars.scale=500;
+		vars.floor=26.5;
+ 
+		vars.points=[];
+		vars.initParticles=700;
+		vars.initV=.01;
+		vars.distributionRadius=800;
+		vars.vortexHeight=25;
+	}
+	vars.frameNo++;
+	requestAnimationFrame(function() {
+		frame(vars);
+	});
+	process(vars);
+	draw(vars);
+}
+frame();
 </script>
-<script id="fragmentShader" type="x-shader/x-fragment">
-  uniform vec2 u_resolution;
-  uniform vec2 u_mouse;
-  uniform float u_time;
-  uniform sampler2D u_noise;
-  
-  #define PI 3.141592653589793
-  #define TAU 6.
-  
-  const float multiplier = 25.5;
-
-  const float zoomSpeed = 10.;
-  const int layers = 10;
-
-  const int octaves = 5;
-
-  vec2 hash2(vec2 p)
-  {
-    vec2 o = texture2D( u_noise, (p+0.5)/256.0, -100.0 ).xy;
-    return o;
-  }
-  
-  mat2 rotate2d(float _angle){
-      return mat2(cos(_angle),sin(_angle),
-                  -sin(_angle),cos(_angle));
-  }
-  
-  vec3 hsb2rgb( in vec3 c ){
-    vec3 rgb = clamp(abs(mod(c.x*6.0+vec3(0.0,4.0,2.0),
-                             6.0)-3.0)-1.0,
-                     0.0,
-                     1.0 );
-    rgb = rgb*rgb*(3.0-2.0*rgb);
-    return c.z * mix( vec3(1.0), rgb, c.y);
-  }
-  
-  float hash(vec2 p)
-  {
-    float o = texture2D( u_noise, (p+0.5)/256.0, -100.0 ).x;
-    return o;
-  }
-  float noise(vec2 uv) {
-    vec2 id = floor(uv);
-    vec2 subuv = fract(uv);
-    vec2 u = subuv * subuv * (3. - 2. * subuv);
-    float a = hash(id);
-    float b = hash(id + vec2(1., 0.));
-    float c = hash(id + vec2(0., 1.));
-    float d = hash(id + vec2(1., 1.));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-  }
-  float fbm(in vec2 uv) {
-    float s = .0;
-    float m = .0;
-    float a = .5;
-    for(int i = 0; i < octaves; i++) {
-      s += a * noise(uv);
-      m += a;
-      a *= .5;
-      uv *= 2.;
-    }
-    return s / m;
-  }
-  
-  vec3 domain(vec2 z){
-    return vec3(hsb2rgb(vec3(atan(z.y,z.x)/TAU,1.,1.)));
-  }
-  vec3 colour(vec2 z) {
-      return domain(z);
-  }
-  
-  // The render function is where we render the pattern to be added to the layer
-  vec3 render(vec2 uv, float scale, vec3 colour) {
-    vec2 id = floor(uv);
-    vec2 subuv = fract(uv);
-    vec2 rand = hash2(id);
-    float bokeh = abs(scale) * 1.;
-    
-    float particle = 0.;
-    
-    if(length(rand) > 1.3) {
-      vec2 pos = subuv-.5;
-      float field = length(pos);
-      particle = smoothstep(.3, 0., field);
-      particle += smoothstep(.4, 0.34 * bokeh, field);
-    }
-    return vec3(particle*2.);
-  }
-  
-  vec3 renderLayer(int layer, int layers, vec2 uv, inout float opacity, vec3 colour, float n) {
-    vec2 _uv = uv;
-    // Scale
-    // Generating a scale value between zero and 1 based on a mod of u_time
-    // A frequency of 10 dixided by the layer index (10 / layers * layer)
-    float scale = mod((u_time + zoomSpeed / float(layers) * float(layer)) / zoomSpeed, -1.);
-    uv *= 20.; // The initial scale. Increasing this makes the cells smaller and the "speed" apepar faster
-    uv *= scale*scale; // then modifying the overall scale by the generated amount
-    // uv *= 1. + ( ( n*.5 ) * ( length(_uv) ) );
-    // uv += .5*float(layer);
-    uv = rotate2d(u_time / 10.) * uv; // rotarting
-    uv += vec2(25. + sin(u_time*.1)) * float(layer); // ofsetting the UV by an arbitrary amount to make the layer appear different
-
-    // render
-    vec3 pass = render(uv * multiplier, scale, colour) * .2; // render the pass
-
-     // this is the opacity of the layer fading in from the "bottom"
-    opacity = 1. + scale;
-    float _opacity = opacity;
-    
-    // pass += n * .5 * mix(vec3(0., .5, 1.5), vec3(1., .5, 0.), opacity);
-    
-    // This is the opacity of the layer fading out at the top (we want this minimal, hence the smoothstep)
-    float endOpacity = smoothstep(0., 0.4, scale * -1.);
-    opacity += endOpacity;
-
-    return pass * _opacity * endOpacity;
-  }
-
-  void main() {
-      vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy);
-
-      if(u_resolution.y < u_resolution.x) {
-        uv /= u_resolution.y;
-      } else {
-        uv /= u_resolution.x;
-      }
-
-      // uv.y += cos(u_time * .1) * .5;
-      // uv.x += sin(u_time * .1) * .5;
-    
-      // float n = fbm(uv * 3. - 2.);
-      float n = fbm((uv + vec2(sin(u_time*.1), u_time*.1)) * 2. - 2.);
-
-      vec3 colour = vec3(0.);
-      // colour = n * mix(vec3(0., .5, 1.5), vec3(1., .5, -.1), n);
-      colour = n * mix(vec3(0., .5, 1.5), clamp(vec3(1., .5, .25)*2., 0., 1.), n);
-      // colour -= n*n*n*n*.4;
-      // colour += smoothstep(.8, 2.5, sin(n*n*n*8.))*.4;
-
-      float opacity = 1.;
-      float opacity_sum = 1.;
-
-      for(int i = 1; i <= layers; i++) {
-        colour += renderLayer(i, layers, uv, opacity, colour, n);
-        opacity_sum += opacity;
-      }
-
-      colour /= opacity_sum;
-
-      gl_FragColor = vec4(clamp(colour * 20., 0., 1.),1.0);
-  }
-</script>
-
-
-<div id="container" touch-action="none"></div>
-
-<script  src="index.js"></script>
-
-
-
-
 </body>
-
 </html>
